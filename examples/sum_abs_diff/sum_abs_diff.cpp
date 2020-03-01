@@ -35,12 +35,25 @@
 
 
 // Reference and Frame sizes:
-#define REF_WIDTH      5
-#define REF_HEIGHT     5
-#define FRAME_WIDTH    2
-#define FRAME_HEIGHT   2
-#define RES_WIDTH      (REF_WIDTH - FRAME_WIDTH + 1)
-#define RES_HEIGHT     (REF_HEIGHT - FRAME_HEIGHT + 1)
+// V0
+#define REF_HEIGHT_V0   5
+#define REF_WIDTH_V0    5
+#define FRAME_HEIGHT_V0 2
+#define FRAME_WIDTH_V0  2
+#define RES_HEIGHT_V0   (REF_HEIGHT_V0 - FRAME_HEIGHT_V0 + 1)
+#define RES_WIDTH_V0    (REF_WIDTH_V0 - FRAME_WIDTH_V0 + 1)
+
+// V1
+#define REF_HEIGHT_V1   65
+#define REF_WIDTH_V1    65
+#define FRAME_HEIGHT_V1 2
+#define FRAME_WIDTH_V1  2
+#define RES_HEIGHT_V1   (REF_HEIGHT_V1 - FRAME_HEIGHT_V1 + 1)
+#define RES_WIDTH_V1    (REF_WIDTH_V1 - FRAME_WIDTH_V1 + 1)
+
+
+
+
 
 // Host Matrix multiplication code (to compare results)
 template <typename TA, typename TB, typename TC>
@@ -60,9 +73,9 @@ void matrix_mult (TA *A, TB *B, TC *C, uint64_t M, uint64_t N, uint64_t P) {
 
 
 void host_sum_abs_diff (int *REF, int *FRAME, int *RES,
-                        int ref_height, int ref_width,
-                        int frame_height, int frame_width,
-                        int res_height, int res_width) {
+                        uint32_t ref_height, uint32_t ref_width,
+                        uint32_t frame_height, uint32_t frame_width,
+                        uint32_t res_height, uint32_t res_width) {
 
         for (int y = 0; y < res_height; y ++) {
                 for (int x = 0; x < res_width; x ++) {
@@ -135,16 +148,46 @@ int kernel_sum_abs_diff (int argc, char **argv) {
         uint32_t block_size_x = 0;
         uint32_t block_size_y = 0;
         hb_mc_dimension_t tg_dim = { .x = 0, .y = 0 };
+        hb_mc_dimension_t grid_dim = { .x = 0, .y = 0 };
+
+        uint32_t ref_height = 0;
+        uint32_t ref_width = 0;
+        uint32_t frame_height = 0;
+        uint32_t frame_width = 0;
+        uint32_t res_height = 0;
+        uint32_t res_width = 0;
+
+
         if(!strcmp("v0", test_name)){
+                ref_height = REF_HEIGHT_V0;
+                ref_width = REF_WIDTH_V0;
+                frame_height = FRAME_HEIGHT_V0;
+                frame_width = FRAME_WIDTH_V0;
+                res_height = RES_HEIGHT_V0;
+                res_width = RES_WIDTH_V0;
+
                 block_size_x = 4;
                 block_size_y = 4;
                 tg_dim = { .x = 4, .y = 4 };
+                grid_dim = { .x = res_width / block_size_x,
+                             .y = res_height / block_size_y };
+        } else if (!strcmp("v1", test_name)) {
+                ref_height = REF_HEIGHT_V1;
+                ref_width = REF_WIDTH_V1;
+                frame_height = FRAME_HEIGHT_V1;
+                frame_width = FRAME_WIDTH_V1;
+                res_height = RES_HEIGHT_V1;
+                res_width = RES_WIDTH_V1;
+
+                block_size_x = 16;
+                block_size_y = 16;
+                tg_dim = { .x = 4, .y = 4 };
+                grid_dim = { .x = res_width / block_size_x,
+                             .y = res_height / block_size_y };
         } else {
                 bsg_pr_test_err("Invalid version provided!.\n");
                 return HB_MC_INVALID;
         }
-        hb_mc_dimension_t grid_dim = { .x = RES_WIDTH / block_size_x,
-                                       .y = RES_HEIGHT / block_size_y };
 
 
         // Initialize the random number generators
@@ -156,16 +199,16 @@ int kernel_sum_abs_diff (int argc, char **argv) {
         std::uniform_real_distribution<float> distribution(0, 255);
 
         // Allocate REF, FRAME, RES, and RES_host on the host
-        int FRAME[FRAME_WIDTH * FRAME_HEIGHT];
-        int REF  [REF_WIDTH * REF_HEIGHT];
-        int RES  [RES_WIDTH * RES_HEIGHT];
-        int RES_host [RES_WIDTH * RES_HEIGHT];
+        int FRAME[frame_width * frame_height];
+        int REF  [ref_width * ref_height];
+        int RES  [res_width * res_height];
+        int RES_host [res_width * res_height];
 
         // Generate random numbers. Since the Manycore can't handle infinities,
         // subnormal numbers, or NANs, filter those out.
         auto res = distribution(generator);
 
-        for (uint64_t i = 0; i < REF_WIDTH * REF_HEIGHT; i++) {
+        for (uint64_t i = 0; i < ref_width * ref_height; i++) {
                 do{
                         res = distribution(generator);
                 }while(!std::isnormal(res) ||
@@ -175,7 +218,7 @@ int kernel_sum_abs_diff (int argc, char **argv) {
                 REF[i] = static_cast<int>(res);
         }
 
-        for (uint64_t i = 0; i < FRAME_WIDTH * FRAME_HEIGHT; i++) {
+        for (uint64_t i = 0; i < frame_width * frame_height; i++) {
                 do{
                         res = distribution(generator);
                 }while(!std::isnormal(res) ||
@@ -187,9 +230,9 @@ int kernel_sum_abs_diff (int argc, char **argv) {
 
         // Generate the known-correct results on the host
         host_sum_abs_diff (REF, FRAME, RES_host, 
-                           REF_HEIGHT, REF_WIDTH,
-                           FRAME_HEIGHT, FRAME_WIDTH, 
-                           RES_HEIGHT, RES_WIDTH);
+                           ref_height, ref_width,
+                           frame_height, frame_width, 
+                           res_height, res_width);
 
         // Initialize device, load binary and unfreeze tiles.
         hb_mc_device_t device;
@@ -214,21 +257,21 @@ int kernel_sum_abs_diff (int argc, char **argv) {
         eva_t REF_device, FRAME_device, RES_device;
 
         // Allocate REF on the device
-        rc = hb_mc_device_malloc(&device, REF_HEIGHT * REF_WIDTH * sizeof(float), &REF_device);
+        rc = hb_mc_device_malloc(&device, ref_height * ref_width * sizeof(float), &REF_device);
         if (rc != HB_MC_SUCCESS) {
                 bsg_pr_test_err("failed to allocate memory on device.\n");
                 return rc;
         }
 
         // Allocate FRAME on the device
-        rc = hb_mc_device_malloc(&device, FRAME_HEIGHT * FRAME_WIDTH * sizeof(float), &FRAME_device);
+        rc = hb_mc_device_malloc(&device, frame_height * frame_width * sizeof(float), &FRAME_device);
         if (rc != HB_MC_SUCCESS) {
                 bsg_pr_test_err("failed to allocate memory on device.\n");
                 return rc;
         }
 
         // Allocate RES on the device
-        rc = hb_mc_device_malloc(&device, RES_HEIGHT * RES_WIDTH * sizeof(float), &RES_device);
+        rc = hb_mc_device_malloc(&device, res_height * res_width * sizeof(float), &RES_device);
         if (rc != HB_MC_SUCCESS) {
                 bsg_pr_test_err("failed to allocate memory on device.\n");
                 return rc;
@@ -238,7 +281,7 @@ int kernel_sum_abs_diff (int argc, char **argv) {
         void *dst = (void *) ((intptr_t) REF_device);
         void *src = (void *) &REF[0];
         rc = hb_mc_device_memcpy (&device, dst, src,
-                                  (REF_HEIGHT * REF_WIDTH) * sizeof(REF[0]),
+                                  (ref_height * ref_width) * sizeof(REF[0]),
                                   HB_MC_MEMCPY_TO_DEVICE);
         if (rc != HB_MC_SUCCESS) {
                 bsg_pr_test_err("failed to copy memory to device.\n");
@@ -249,7 +292,7 @@ int kernel_sum_abs_diff (int argc, char **argv) {
         dst = (void *) ((intptr_t) FRAME_device);
         src = (void *) &FRAME[0];
         rc = hb_mc_device_memcpy (&device, dst, src,
-                                  (FRAME_HEIGHT * FRAME_WIDTH) * sizeof(FRAME[0]),
+                                  (frame_height * frame_width) * sizeof(FRAME[0]),
                                   HB_MC_MEMCPY_TO_DEVICE);
         if (rc != HB_MC_SUCCESS) {
                 bsg_pr_test_err("failed to copy memory to device.\n");
@@ -258,9 +301,9 @@ int kernel_sum_abs_diff (int argc, char **argv) {
 
         // Prepare list of input arguments for kernel.
         uint32_t cuda_argv[11] = {REF_device, FRAME_device, RES_device,
-                                 REF_HEIGHT, REF_WIDTH,
-                                 FRAME_HEIGHT, FRAME_WIDTH,
-                                 RES_HEIGHT, RES_WIDTH,
+                                 ref_height, ref_width,
+                                 frame_height, frame_width,
+                                 res_height, res_width,
                                  block_size_y, block_size_x};
 
         // Enquque grid of tile groups, pass in grid and tile group dimensions,
@@ -282,7 +325,7 @@ int kernel_sum_abs_diff (int argc, char **argv) {
         src = (void *) ((intptr_t) RES_device);
         dst = (void *) &RES[0];
         rc = hb_mc_device_memcpy (&device, dst, src,
-                                  (RES_HEIGHT * RES_WIDTH) * sizeof(float),
+                                  (res_height * res_width) * sizeof(float),
                                   HB_MC_MEMCPY_TO_HOST);
         if (rc != HB_MC_SUCCESS) {
                 bsg_pr_test_err("failed to copy memory from device.\n");
@@ -296,13 +339,13 @@ int kernel_sum_abs_diff (int argc, char **argv) {
                 return rc;
         }
 
-        matrix_print(RES, RES_HEIGHT, RES_WIDTH);
+        matrix_print(RES, res_height, res_width);
 
 
         // Compare the known-correct matrix (R) and the result matrix (C)
 
         float max = 0.1;
-        double sse = matrix_sse(RES, RES_host, RES_HEIGHT, RES_WIDTH);
+        double sse = matrix_sse(RES, RES_host, res_height, res_width);
 
         if (std::isnan(sse) || sse > max) {
                 bsg_pr_test_info(BSG_RED("Matrix Mismatch. SSE: %f\n"), sse);
