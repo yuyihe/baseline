@@ -40,8 +40,7 @@ extern "C" {
                 rc = single_sum_abs_diff  (REF, FRAME, RES,
                                            REF_HEIGHT, REF_WIDTH,
                                            FRAME_HEIGHT, FRAME_WIDTH,
-                                           RES_HEIGHT, RES_WIDTH,
-                                           block_size_y, block_size_x);
+                                           RES_HEIGHT, RES_WIDTH);
                 bsg_cuda_print_stat_end(0);
 
                 bsg_tile_group_barrier(&r_barrier, &c_barrier);

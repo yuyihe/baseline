@@ -12,8 +12,7 @@
 int  __attribute__ ((noinline)) single_sum_abs_diff (int *REF, int *FRAME, int *RES,
                                               uint32_t REF_HEIGHT, uint32_t REF_WIDTH,
                                               uint32_t FRAME_HEIGHT, uint32_t FRAME_WIDTH,
-                                              uint32_t RES_HEIGHT, uint32_t RES_WIDTH,
-                                              uint32_t block_size_y, uint32_t block_size_x) {
+                                              uint32_t RES_HEIGHT, uint32_t RES_WIDTH) {
 
         int start_y = bsg_y;
         int end_y   = start_y + FRAME_HEIGHT;
