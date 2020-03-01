@@ -34,7 +34,7 @@
 /******************************************************************************/
 
 
-// Matrix sizes:
+// Reference and Frame sizes:
 #define REF_WIDTH      5
 #define REF_HEIGHT     5
 #define FRAME_WIDTH    2
@@ -56,6 +56,36 @@ void matrix_mult (TA *A, TB *B, TC *C, uint64_t M, uint64_t N, uint64_t P) {
         }
         return;
 }
+
+
+
+void host_sum_abs_diff (int *REF, int *FRAME, int *RES,
+                        int ref_height, int ref_width,
+                        int frame_height, int frame_width,
+                        int res_height, int res_width) {
+
+        for (int y = 0; y < res_height; y ++) {
+                for (int x = 0; x < res_width; x ++) {
+
+                        int sad = 0;
+                        int start_y = y;
+                        int end_y = start_y + frame_height;
+                        int start_x = x;
+                        int end_x = start_x + frame_width;
+
+                        for (int iter_y = start_y; iter_y < end_y; iter_y ++) {
+                                for (int iter_x = start_x; iter_x < end_x; iter_x ++) {
+                                        sad += abs ( REF[iter_y * ref_width + iter_x] - FRAME[(iter_y - start_y) * frame_width + (iter_x - start_x)] );
+                                }
+                        }
+
+                        RES[y * res_width + x] = sad;
+                }
+        }
+};
+
+
+
 
 // Compute the sum of squared error between matricies A and B (M x N)
 template <typename T>
@@ -125,10 +155,11 @@ int kernel_sum_abs_diff (int argc, char **argv) {
         //std::uniform_real_distribution<float> distribution(lim.min(),lim.max());
         std::uniform_real_distribution<float> distribution(0, 255);
 
-        // Allocate A, B, BT, C and R (result) on the host
+        // Allocate REF, FRAME, RES, and RES_host on the host
         int FRAME[FRAME_WIDTH * FRAME_HEIGHT];
         int REF  [REF_WIDTH * REF_HEIGHT];
         int RES  [RES_WIDTH * RES_HEIGHT];
+        int RES_host [RES_WIDTH * RES_HEIGHT];
 
         // Generate random numbers. Since the Manycore can't handle infinities,
         // subnormal numbers, or NANs, filter those out.
@@ -155,7 +186,10 @@ int kernel_sum_abs_diff (int argc, char **argv) {
         }
 
         // Generate the known-correct results on the host
-        //matrix_mult (A, B, R, A_HEIGHT, A_WIDTH, B_WIDTH);
+        host_sum_abs_diff (REF, FRAME, RES_host, 
+                           REF_HEIGHT, REF_WIDTH,
+                           FRAME_HEIGHT, FRAME_WIDTH, 
+                           RES_HEIGHT, RES_WIDTH);
 
         // Initialize device, load binary and unfreeze tiles.
         hb_mc_device_t device;
@@ -262,16 +296,19 @@ int kernel_sum_abs_diff (int argc, char **argv) {
                 return rc;
         }
 
+        matrix_print(RES, RES_HEIGHT, RES_WIDTH);
+
+
         // Compare the known-correct matrix (R) and the result matrix (C)
-/*
+
         float max = 0.1;
-        double sse = matrix_sse(R, C, C_HEIGHT, C_WIDTH);
+        double sse = matrix_sse(RES, RES_host, RES_HEIGHT, RES_WIDTH);
 
         if (std::isnan(sse) || sse > max) {
                 bsg_pr_test_info(BSG_RED("Matrix Mismatch. SSE: %f\n"), sse);
                 return HB_MC_FAIL;
         }
-*/
+
 
         bsg_pr_test_info(BSG_GREEN("Matrix Match.\n"));
         return HB_MC_SUCCESS;
